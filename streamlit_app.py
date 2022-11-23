@@ -3,10 +3,11 @@ import dataprofiler as dp
 import os
 import pdf2image
 import pdftotext
+import fitz
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # disable TensorFlow info msgs
 
-title = "PII Redaction GUI"
+title = "PII Redaction"
 st.set_page_config(page_title=title, layout='wide')
 st.title('History Lab ' + title)
 
@@ -41,10 +42,12 @@ if uploaded_file:
     orig_text = text
     redact_text = ''
     pos = 0
-    redactions = []
+    redactions = list()
+    sensitive = list()
     for s in redact_labels:
         r = list(s)
         r.append(orig_text[r[0]:r[1]])
+        sensitive.append(orig_text[r[0]:r[1]])
         redactions.append(r)
         redact_text += orig_text[pos:r[0]] + '**' + r[2] + '**'
         pos = r[1]
@@ -52,3 +55,23 @@ if uploaded_file:
     st.json(redactions, expanded=False)
     st.code(redact_text)
     st.subheader("Redacted PDF")
+    rdoc = fitz.Document(stream=uploaded_file.getvalue())
+    for page in rdoc:
+        # _wrapContents is needed for fixing
+        # alignment issues with rect boxes in some
+        # cases where there is alignment issue
+        page.wrap_contents()
+        # getting the rect boxes which consists the matching email regex
+        for data in sensitive:
+            areas = page.search_for(data)
+            # drawing outline over sensitive datas
+            _ = [page.add_redact_annot(area, fill=(0, 0, 0)) for area in areas]
+            # applying the redaction
+            page.apply_redactions()
+    # rdoc.save('redacted-' + uploaded_file.name)
+    images = pdf2image.convert_from_bytes(rdoc.tobytes())
+    st.image(images[0])
+    st.download_button(label='Download redacted PDF',
+                       data=rdoc.tobytes(),
+                       file_name='redacted-' + uploaded_file.name,
+                       mime='application/pdf')
